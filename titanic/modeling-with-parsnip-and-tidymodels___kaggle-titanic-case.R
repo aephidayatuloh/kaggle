@@ -39,8 +39,6 @@ training_titanic %>%
   group_by(pclass, embarked) %>% 
   summarise(med = median(fare))
 
-# Impute age variable
-
 custom_palette <- c("#32a852", "#a4e5f5", "#f0c481", "#a8f0c7")
 
 training_titanic %>% 
@@ -53,22 +51,27 @@ training_titanic %>%
 # Disebut jg data engineering
 preproc <- function(dataset, outcome = NULL, level = NULL){
   d1 <- dataset %>% 
-    mutate(title = str_remove_all(name, '(.*, )|(\\..*)'),
+    mutate(sex = factor(sex),
+           title = str_remove_all(name, '(.*, )|(\\..*)'),
            title = case_when(title %in% c("Ms", "Mlle") ~ "Miss",
                              title ==  "Mme" ~ "Mrs",
                              title %in% c("Master", "Miss", "Mr", "Mrs") ~ as.character(title),
                              TRUE ~ "Rare Title"),
+           title = factor(title),
            family_name = str_sub(name, 1, str_locate(name, ",")[,2] - 1),
+           family_name = factor(family_name),
            family_size = sib_sp + parch + 1,
            family_size_category = case_when(family_size == 1 ~ "singleton",
                                           between(family_size, 1, 5) ~ "small",
                                           family_size > 5 ~ "large"),
-           family_size = factor(family_size),
+           family_size_category = factor(family_size_category),
            deck = str_sub(cabin, 1, 1),
            deck = case_when(is.na(deck) ~ "Regular",
                             TRUE ~ as.character(deck)),
+           deck = factor(deck),
            embarked = case_when(is.na(embarked) ~ "C",
                                 TRUE ~ embarked),
+           embarked = factor(embarked),
            pclass = factor(pclass),
            fare = case_when(is.na(fare) & pclass == 1 & embarked == "C" ~ 78.3,
                             is.na(fare) & pclass == 1 & embarked == "Q" ~ 90,
