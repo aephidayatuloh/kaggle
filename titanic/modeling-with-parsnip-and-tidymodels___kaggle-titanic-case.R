@@ -2,13 +2,11 @@
 # Improved from : https://www.benjaminsorensen.me/post/modeling-with-parsnip-and-tidymodels/
 
 library(tidyverse)
-# library(lubridate)
 library(tidymodels)
 library(skimr)
 library(vip)
 library(janitor)
 library(lime)
-library(missForest)
 
 training_titanic <- read_csv("titanic/input/train.csv") %>% 
   janitor::clean_names() 
@@ -46,20 +44,27 @@ training_titanic %>%
   geom_histogram(color = "white", fill = custom_palette[1]) +
   theme_minimal()
 
+age_na <- training_titanic %>% 
+  mutate(age_na = case_when(is.na(age) ~ "NA",
+                            TRUE ~ "Filled"))
+
+age_na %>% 
+  ggplot(aes(sex, fill = age_na)) +
+  geom_bar()
 
 # Preprocessing Data untuk training dan testing
-# Disebut jg data engineering
+# Disebut jg feature engineering
 preproc <- function(dataset, outcome = NULL, level = NULL){
   d1 <- dataset %>% 
-    mutate(sex = factor(sex),
+    mutate(#sex = factor(sex),
            title = str_remove_all(name, '(.*, )|(\\..*)'),
            title = case_when(title %in% c("Ms", "Mlle") ~ "Miss",
                              title ==  "Mme" ~ "Mrs",
                              title %in% c("Master", "Miss", "Mr", "Mrs") ~ as.character(title),
                              TRUE ~ "Rare Title"),
-           title = factor(title),
+           # title = factor(title),
            family_name = str_sub(name, 1, str_locate(name, ",")[,2] - 1),
-           family_name = factor(family_name),
+           # family_name = factor(family_name),
            family_size = sib_sp + parch + 1,
            family_size_category = case_when(family_size == 1 ~ "singleton",
                                           between(family_size, 1, 5) ~ "small",
@@ -68,11 +73,11 @@ preproc <- function(dataset, outcome = NULL, level = NULL){
            deck = str_sub(cabin, 1, 1),
            deck = case_when(is.na(deck) ~ "Regular",
                             TRUE ~ as.character(deck)),
-           deck = factor(deck),
+           # deck = factor(deck),
            embarked = case_when(is.na(embarked) ~ "C",
                                 TRUE ~ embarked),
-           embarked = factor(embarked),
-           pclass = factor(pclass),
+           # embarked = factor(embarked),
+           # pclass = factor(pclass),
            fare = case_when(is.na(fare) & pclass == 1 & embarked == "C" ~ 78.3,
                             is.na(fare) & pclass == 1 & embarked == "Q" ~ 90,
                             is.na(fare) & pclass == 1 & embarked == "S" ~ 52,
@@ -85,7 +90,8 @@ preproc <- function(dataset, outcome = NULL, level = NULL){
                             TRUE ~ fare),
            age = case_when(is.na(age) ~ median(age, na.rm = TRUE),
                            TRUE ~ as.numeric(age))
-    ) 
+    ) %>% 
+    mutate_if(is.character, as_factor)
   
   if(is.null(outcome)){
     return(d1 %>% 
@@ -102,6 +108,10 @@ train_data <- preproc(training_titanic, outcome = "survived", level = c(0,1))
 test_data <- preproc(testing_titanic)
 
 skim(train_data)
+train_data %>% 
+  ggplot(aes(x = age)) +
+  geom_histogram(color = "white", fill = custom_palette[1]) +
+  theme_minimal()
 count(train_data, deck)
 
 set.seed(1001)
