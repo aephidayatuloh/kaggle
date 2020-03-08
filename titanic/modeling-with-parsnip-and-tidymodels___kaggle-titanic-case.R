@@ -596,9 +596,13 @@ ens_data_prep <- function(dataset, logreg, rf, xgb){
 
 ens_train <- ens_data_prep(train, logreg_fit, rf_fit, xgb_fit)
 
-ens_test <- ens_data_prep(bind_rows(train, test), logreg_fit, rf_fit, xgb_fit)
+ens_test <- ens_data_prep(test, logreg_fit, rf_fit, xgb_fit)
 metric_accuracy(actual = ens_test$survived, predicted = ens_test$survived) 
 
 ens_all <- ens_data_prep(bind_rows(train, test), logreg_fit, rf_fit, xgb_fit)
 metric_accuracy(actual = ens_all$survived, predicted = ens_all$survived) 
   
+ens_testing <- ens_data_prep(test_data_baked, logreg_fit, rf_fit, xgb_fit)
+submission_titanic %>% 
+  mutate(Survived = ens_testing$pred_ensemble) %>% 
+  write_csv("titanic/submission_titanic_ensemble.csv")
