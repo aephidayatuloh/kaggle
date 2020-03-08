@@ -310,6 +310,10 @@ rf_fit <- fit(
   data = train
 )
 
+# Variable Important
+vip(rf_fit) + 
+  ggtitle("Variable Important: RF")
+
 ## Predicting!
 predicted <- tibble(actual = test$survived) %>% 
   bind_cols(pred_class = predict(rf_fit, test, type = "class")$.pred_class) %>% 
@@ -454,6 +458,10 @@ xgb_fit <- fit(
   data = train
 )
 
+# Variable Important
+vip(xgb_fit) + 
+  ggtitle("Variable Important: XGBoost")
+
 ## Predicting!
 predicted <- tibble(actual = test$survived) %>% 
   bind_cols(pred_class = predict(xgb_fit, test, type = "class")$.pred_class) %>% 
@@ -578,6 +586,153 @@ eval %>%
   summarise_at(.vars = vars(.estimate), .funs = list(min = min, median = median, mean = mean, sd = sd, max = max)) %>% 
   knitr::kable()
 
+
+###########################################################################
+#                                                                         #
+#                    Keras Logistic Regression Modeling                   #
+#                                                                         #
+###########################################################################
+
+## Model specification
+keraslogreg_mod <- logistic_reg(
+  mode = "classification"
+) %>% 
+  set_engine("keras")
+
+## Fitting
+keraslogreg_fit <- fit(
+  object = keraslogreg_mod,
+  formula = formula(prepped), 
+  data = train
+)
+
+# Variable Important
+vip(keraslogreg_fit) + 
+  ggtitle("Variable Important: keraslogreg")
+
+## Predicting!
+predicted <- tibble(actual = test$survived) %>% 
+  bind_cols(pred_class = predict(logreg_fit, test, type = "class")$.pred_class) %>% 
+  bind_cols(pred_prob = predict(logreg_fit, test, type = "prob"))
+
+## Assessment -- test error
+metrics(predicted, truth = actual, .pred_1, estimate = pred_class) %>% 
+  knitr::kable()
+
+conf_mat(predicted, truth = actual, estimate = pred_class)[[1]] %>% 
+  as_tibble() %>% 
+  mutate(pct = n/sum(n)) %>% 
+  ggplot(aes(Prediction, Truth, alpha = n)) + 
+  geom_tile(fill = custom_palette[4], show.legend = FALSE) +
+  geom_text(aes(label = paste0(n, "\n", round(pct*100, 2), "%")), 
+            color = "coral", alpha = 1, size = 6) +
+  theme_minimal() +
+  labs(
+    title = "Confusion matrix"
+  )
+
+metrics_tbl <- tibble("accuracy" = yardstick::metrics(predicted, actual, pred_class) %>%
+                        dplyr::select(-.estimator) %>%
+                        dplyr::filter(.metric == "accuracy") %>% 
+                        dplyr::select(.estimate),
+                      "precision" = yardstick::precision(predicted, actual, pred_class) %>% 
+                        dplyr::select(.estimate),
+                      "recall" = yardstick::recall(predicted, actual, pred_class) %>% 
+                        dplyr::select(.estimate),
+                      "f_meas" = yardstick::f_meas(predicted, actual, pred_class) %>%
+                        dplyr::select(.estimate),
+                      "auc" = yardstick::metrics(predicted, actual, .pred_1, estimate = pred_class) %>% 
+                        filter(.metric == "roc_auc") %>% 
+                        select(.estimate)) %>%
+  tidyr::unnest(cols = c(accuracy, precision, recall, f_meas, auc))
+metrics_tbl
+# autoplot(roc_curve(predicted, actual, .pred_1))
+
+roc_curve(predicted, actual, .pred_1) %>%
+  mutate(.threshold = case_when(is.infinite(.threshold) ~ 0,
+                                TRUE ~ as.numeric(.threshold)),
+         specificity = 1 - specificity) %>% 
+  arrange(specificity, sensitivity) %>% 
+  ggplot(aes(x = specificity, y = sensitivity)) +
+  geom_line(color = "red") +
+  geom_segment(aes(x = 0, y = 0, xend = 1, yend = 1), linetype = "longdash") +
+  labs(x = "1 - specificity",
+       subtitle = sprintf("AUC: %s", round(metrics_tbl$auc, 5))) + 
+  theme_light() 
+
+# LIME explaination
+explanation <- lime(train %>% select(-survived), logreg_fit)
+explanations <- explain(x = test[1:3,-1], 
+                        explainer = explanation, 
+                        labels = "1", 
+                        n_permutations  = 5000,
+                        dist_fun        = "manhattan",
+                        kernel_width    = 3,
+                        n_features = 7)
+
+# Get an overview with the standard plot
+plot_explanations(explanations)
+plot_features(explanations, ncol = 2)
+
+test_data_baked <- prepped %>% 
+  bake(new_data = test_data)
+
+submission_titanic %>% 
+  mutate(Survived = predict(logreg_fit, test_data_baked, type = "class")$.pred_class) %>% 
+  write_csv("titanic/submission_titanic_logreg_eng_glm.csv")
+
+# Save model
+# saveRDS(object = logreg_fit, "model/logreg_fit.rds")
+
+############################ Cross Validation #############################
+
+folded <- folds %>% 
+  mutate(
+    recipes = splits %>%
+      # Prepper is a wrapper for `prep()` which handles `split` objects
+      map(prepper, recipe = rec), 
+    training_data = splits %>% map(analysis),
+    logreg_fits = map2(
+      recipes,
+      training_data, 
+      ~ fit(
+        logreg_mod, 
+        formula(.x), 
+        data = bake(object = .x, new_data = .y)
+      )
+    )
+  )
+
+## Predict 
+predict_logreg <- function(split, rec, model) {
+  test_set <- bake(rec, assessment(split))
+  tibble(actual = test_set$survived) %>% 
+    bind_cols(pred_class = predict(model, test_set, type = "class")$.pred_class) %>% 
+    bind_cols(pred_prob = predict(model, test_set, type = "prob"))
+}
+
+predictions <- folded %>% 
+  mutate(pred = list(
+    splits,
+    recipes,
+    logreg_fits
+  ) %>% 
+    pmap(predict_logreg)
+  )
+
+## Evaluate
+eval <- predictions %>% 
+  transmute(
+    metrics = pred %>% map(~ metrics(., truth = actual, starts_with(".pred")[1], estimate = pred_class))
+  ) %>% 
+  unnest(metrics)
+
+eval %>% knitr::kable()
+
+eval %>% 
+  group_by(.metric) %>% 
+  summarise_at(.vars = vars(.estimate), .funs = list(min = min, median = median, mean = mean, sd = sd, max = max)) %>% 
+  knitr::kable()
 
 ###########################################################################
 #                                                                         #
