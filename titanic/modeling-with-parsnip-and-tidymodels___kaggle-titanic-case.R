@@ -34,6 +34,12 @@ training_titanic %>%
 
 # Impute fare variable
 training_titanic %>% 
+  filter(!is.na(embarked)) %>% 
+  ggplot(aes(x = factor(pclass), y = fare, fill = embarked)) +
+  geom_boxplot() +
+  theme_minimal()
+  
+training_titanic %>% 
   group_by(pclass, embarked) %>% 
   summarise(med = median(fare))
 
@@ -77,7 +83,7 @@ preproc <- function(dataset, outcome = NULL, level = NULL){
            embarked = case_when(is.na(embarked) ~ "C",
                                 TRUE ~ embarked),
            # embarked = factor(embarked),
-           # pclass = factor(pclass),
+           pclass = factor(pclass),
            fare = case_when(is.na(fare) & pclass == 1 & embarked == "C" ~ 78.3,
                             is.na(fare) & pclass == 1 & embarked == "Q" ~ 90,
                             is.na(fare) & pclass == 1 & embarked == "S" ~ 52,
@@ -88,19 +94,29 @@ preproc <- function(dataset, outcome = NULL, level = NULL){
                             is.na(fare) & pclass == 3 & embarked == "Q" ~ 7.75,
                             is.na(fare) & pclass == 3 & embarked == "S" ~ 8.05,
                             TRUE ~ fare),
-           age = case_when(is.na(age) ~ median(age, na.rm = TRUE),
-                           TRUE ~ as.numeric(age))
+           # age = case_when(is.na(age) ~ median(age, na.rm = TRUE),
+           #                 TRUE ~ as.numeric(age)),
+           age_group = case_when(between(age, 0, 10) ~ "0 - 10",
+                                 between(age, 10.5, 20.5) ~ "10 - 20",
+                                 between(age, 20.5, 30.5) ~ "20 - 30",
+                                 between(age, 30.5, 40.5) ~ "30 - 40",
+                                 between(age, 40.5, 50.5) ~ "40 - 50",
+                                 between(age, 50.5, 60.5) ~ "50 - 60",
+                                 between(age, 60.5, 70.5) ~ "60 - 70",
+                                 between(age, 70.5, 80.5) ~ "70 - 80",
+                                 is.na(age) ~ "Unknown",
+                                 TRUE ~ "80+")
     ) %>% 
-    mutate_if(is.character, as_factor)
+    mutate_if(is.character, as.factor)
   
   if(is.null(outcome)){
     return(d1 %>% 
-             select(passenger_id, sex, age, pclass, fare, embarked, title, family_name, family_size, family_size_category, deck)
+             select(passenger_id, sex, age_group, pclass, fare, embarked, title, family_name, family_size, family_size_category, deck)
            )
   } else if(!is.null(outcome) & outcome %in% names(d1)){
     d1[[outcome]] <- factor(d1[[outcome]], levels = level)
     return(d1 %>% 
-             select(passenger_id, survived, sex, age, pclass, fare, embarked, title, family_name, family_size, family_size_category, deck))
+             select(passenger_id, survived, sex, age_group, pclass, fare, embarked, title, family_name, family_size, family_size_category, deck))
   }
 }
 
@@ -108,11 +124,18 @@ train_data <- preproc(training_titanic, outcome = "survived", level = c(0,1))
 test_data <- preproc(testing_titanic)
 
 skim(train_data)
+count(train_data, age_group)
 train_data %>% 
-  ggplot(aes(x = age)) +
-  geom_histogram(color = "white", fill = custom_palette[1]) +
+  ggplot(aes(x = age_group)) +
+  geom_bar(color = "white", fill = custom_palette[1]) +
   theme_minimal()
-count(train_data, deck)
+
+train_data %>% 
+  ggplot(aes(x = fare)) +
+  geom_histogram(color = custom_palette[2], fill = custom_palette[1]) +
+  theme_minimal()
+
+count(train_data, deck, sort = TRUE)
 
 set.seed(1001)
 splits <- initial_split(train_data, prop = 0.8)
@@ -124,7 +147,7 @@ folds <- vfold_cv(training_set, v = 5, repeats = 3, strata = "survived")
 # Pre-processing
 rec <- train_data %>% 
   recipe() %>% 
-  update_role(pclass, sex, age, fare, embarked, title, family_size, new_role = "predictor") %>% 
+  update_role(pclass, sex, age_group, fare, embarked, title, family_size, new_role = "predictor") %>% 
   update_role(survived, new_role = "outcome") %>% 
   step_rm(-has_role("outcome"), -has_role("predictor")) %>% 
   step_string2factor(all_nominal(), -all_outcomes()) #%>%
@@ -299,7 +322,9 @@ eval %>%
 ## Model specification
 rf_mod <- rand_forest(
   mode = "classification",
-  trees = 500
+  trees = 500,
+  mtry = 5,
+  min_n = 10
 ) %>% 
   set_engine("randomForest")
 
@@ -447,7 +472,13 @@ eval %>%
 ## Model specification
 xgb_mod <- boost_tree(
   mode = "classification",
-  trees = 500
+  trees = 1000,
+  mtry = 500, 
+  min_n = 10, 
+  tree_depth = 6, 
+  learn_rate = 0.01, 
+  loss_reduction = 0.02, 
+  sample_size = 1
 ) %>%
   set_engine("xgboost")
 
@@ -563,7 +594,7 @@ predict_xgb <- function(split, rec, model) {
     bind_cols(pred_prob = predict(model, test_set, type = "prob"))
 }
 
-predictions <- folded %>% 
+predictions_xgb <- folded %>% 
   mutate(pred = list(
     splits,
     recipes,
@@ -573,7 +604,7 @@ predictions <- folded %>%
   )
 
 ## Evaluate
-eval <- predictions %>% 
+eval <- predictions_xgb %>% 
   transmute(
     metrics = pred %>% map(~ metrics(., truth = actual, starts_with(".pred")[1], estimate = pred_class))
   ) %>% 
@@ -595,7 +626,9 @@ eval %>%
 
 ## Model specification
 keraslogreg_mod <- logistic_reg(
-  mode = "classification"
+  mode = "classification", 
+  penalty = 5, 
+  mixture = 1
 ) %>% 
   set_engine("keras")
 
@@ -612,8 +645,8 @@ vip(keraslogreg_fit) +
 
 ## Predicting!
 predicted <- tibble(actual = test$survived) %>% 
-  bind_cols(pred_class = predict(logreg_fit, test, type = "class")$.pred_class) %>% 
-  bind_cols(pred_prob = predict(logreg_fit, test, type = "prob"))
+  bind_cols(pred_class = predict(keraslogreg_fit, test, type = "class")$.pred_class) %>% 
+  bind_cols(pred_prob = predict(keraslogreg_fit, test, type = "prob"))
 
 ## Assessment -- test error
 metrics(predicted, truth = actual, .pred_1, estimate = pred_class) %>% 
@@ -661,7 +694,7 @@ roc_curve(predicted, actual, .pred_1) %>%
   theme_light() 
 
 # LIME explaination
-explanation <- lime(train %>% select(-survived), logreg_fit)
+explanation <- lime(train %>% select(-survived), keraslogreg_fit)
 explanations <- explain(x = test[1:3,-1], 
                         explainer = explanation, 
                         labels = "1", 
@@ -678,8 +711,8 @@ test_data_baked <- prepped %>%
   bake(new_data = test_data)
 
 submission_titanic %>% 
-  mutate(Survived = predict(logreg_fit, test_data_baked, type = "class")$.pred_class) %>% 
-  write_csv("titanic/submission_titanic_logreg_eng_glm.csv")
+  mutate(Survived = predict(keraslogreg_fit, test_data_baked, type = "class")$.pred_class) %>% 
+  write_csv("titanic/submission_titanic_logreg_eng_keras.csv")
 
 # Save model
 # saveRDS(object = logreg_fit, "model/logreg_fit.rds")
@@ -692,11 +725,11 @@ folded <- folds %>%
       # Prepper is a wrapper for `prep()` which handles `split` objects
       map(prepper, recipe = rec), 
     training_data = splits %>% map(analysis),
-    logreg_fits = map2(
+    keraslogreg_fits = map2(
       recipes,
       training_data, 
       ~ fit(
-        logreg_mod, 
+        keraslogreg_mod, 
         formula(.x), 
         data = bake(object = .x, new_data = .y)
       )
@@ -704,7 +737,7 @@ folded <- folds %>%
   )
 
 ## Predict 
-predict_logreg <- function(split, rec, model) {
+predict_keraslogreg <- function(split, rec, model) {
   test_set <- bake(rec, assessment(split))
   tibble(actual = test_set$survived) %>% 
     bind_cols(pred_class = predict(model, test_set, type = "class")$.pred_class) %>% 
