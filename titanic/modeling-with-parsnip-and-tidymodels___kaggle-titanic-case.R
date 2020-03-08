@@ -386,9 +386,6 @@ submission_titanic %>%
 
 ############################ Cross Validation #############################
 
-## v-fold cross validation
-folds <- vfold_cv(train_data, v = 5)
-
 folded <- folds %>% 
   mutate(
     recipes = splits %>%
@@ -533,9 +530,6 @@ submission_titanic %>%
 
 ############################ Cross Validation #############################
 
-## v-fold cross validation
-# folds <- vfold_cv(train_data, v = 5)
-
 folded <- folds %>% 
   mutate(
     recipes = splits %>%
@@ -554,7 +548,7 @@ folded <- folds %>%
   )
 
 ## Predict 
-predict_rf <- function(split, rec, model) {
+predict_xgb <- function(split, rec, model) {
   test_set <- bake(rec, assessment(split))
   tibble(actual = test_set$survived) %>% 
     bind_cols(pred_class = predict(model, test_set, type = "class")$.pred_class) %>% 
@@ -567,7 +561,7 @@ predictions <- folded %>%
     recipes,
     xgb_fits
   ) %>% 
-    pmap(predict_rf)
+    pmap(predict_xgb)
   )
 
 ## Evaluate
@@ -596,149 +590,15 @@ ens_data_prep <- function(dataset, logreg, rf, xgb){
   dataset %>% 
     bind_cols(pred_logreg = predict(logreg, dataset, type = "class")$.pred_class) %>% 
     bind_cols(pred_rf = predict(rf, dataset, type = "class")$.pred_class) %>% 
-    bind_cols(pred_xgb = predict(xgb, dataset, type = "class")$.pred_class)
+    bind_cols(pred_xgb = predict(xgb, dataset, type = "class")$.pred_class) %>% 
+    mutate(pred_ensemble = factor(apply(.[,c("pred_logreg", "pred_rf", "pred_xgb")], 1, function(i)names(sort(table(unlist(i)), decreasing = TRUE))[1])))
 }
+
 ens_train <- ens_data_prep(train, logreg_fit, rf_fit, xgb_fit)
 
-ens_test <- ens_data_prep(test, logreg_fit, rf_fit, xgb_fit)
+ens_test <- ens_data_prep(bind_rows(train, test), logreg_fit, rf_fit, xgb_fit)
+metric_accuracy(actual = ens_test$survived, predicted = ens_test$survived) 
 
-## Model specification
-logregkeras_mod <- logistic_reg(
-  mode = "classification"
-  ) %>%
-  set_engine("keras")
-
-## Fitting
-logregkeras_fit <- fit(
-  object = logregkeras_mod,
-  formula = formula(prepped),
-  data = ens_train
-)
-
-## Predicting!
-predicted <- tibble(actual = ens_test$survived) %>% 
-  bind_cols(pred_class = predict(logregkeras_fit, ens_test, type = "class")$.pred_class) %>% 
-  bind_cols(pred_prob = predict(logregkeras_fit, ens_test, type = "prob"))
-
-## Assessment -- test error
-metrics(predicted, truth = actual, .pred_1, estimate = pred_class) %>% 
-  knitr::kable()
-
-conf_mat(predicted, truth = actual, estimate = pred_class)[[1]] %>% 
-  as_tibble() %>% 
-  mutate(pct = n/sum(n)) %>% 
-  ggplot(aes(Prediction, Truth, alpha = n)) + 
-  geom_tile(fill = custom_palette[4], show.legend = FALSE) +
-  geom_text(aes(label = paste0(n, "\n", round(pct*100, 2), "%")), 
-            color = "coral", alpha = 1, size = 6) +
-  theme_minimal() +
-  labs(
-    title = "Confusion matrix"
-  )
-
-metrics_tbl <- tibble("accuracy" = yardstick::metrics(predicted, actual, pred_class) %>%
-                        dplyr::select(-.estimator) %>%
-                        dplyr::filter(.metric == "accuracy") %>% 
-                        dplyr::select(.estimate),
-                      "precision" = yardstick::precision(predicted, actual, pred_class) %>% 
-                        dplyr::select(.estimate),
-                      "recall" = yardstick::recall(predicted, actual, pred_class) %>% 
-                        dplyr::select(.estimate),
-                      "f_meas" = yardstick::f_meas(predicted, actual, pred_class) %>%
-                        dplyr::select(.estimate),
-                      "auc" = yardstick::metrics(predicted, actual, .pred_1, estimate = pred_class) %>% 
-                        filter(.metric == "roc_auc") %>% 
-                        select(.estimate)) %>%
-  tidyr::unnest(cols = c(accuracy, precision, recall, f_meas, auc))
-metrics_tbl
-# autoplot(roc_curve(predicted, actual, .pred_1))
-
-roc_curve(predicted, actual, .pred_1) %>%
-  mutate(.threshold = case_when(is.infinite(.threshold) ~ 0,
-                                TRUE ~ as.numeric(.threshold)),
-         specificity = 1 - specificity) %>% 
-  arrange(specificity, sensitivity) %>% 
-  ggplot(aes(x = specificity, y = sensitivity)) +
-  geom_line(color = "red") +
-  geom_segment(aes(x = 0, y = 0, xend = 1, yend = 1), linetype = "longdash") +
-  labs(x = "1 - specificity",
-       subtitle = sprintf("AUC: %s", round(metrics_tbl$auc, 5))) + 
-  theme_light() 
-
-# LIME explaination
-explanation <- lime(ens_train %>% select(-survived), logregkeras_fit)
-explanations <- explain(x = ens_test[1:3,-1], 
-                        explainer = explanation, 
-                        labels = "1", 
-                        n_permutations  = 5000,
-                        dist_fun        = "manhattan",
-                        kernel_width    = 3,
-                        n_features = 7)
-
-# Get an overview with the standard plot
-plot_explanations(explanations)
-plot_features(explanations, ncol = 2)
-
-test_data_baked <- prepped %>% 
-  bake(new_data = test_data) %>% 
-  ens_data_prep(logreg_fit, rf_fit, xgb_fit)
-
-submission_titanic %>% 
-  mutate(Survived = predict(logregkeras_fit, test_data_baked, type = "class")$.pred_class) %>%
-  write_csv("06-modeling/submission_titanic_logreg_eng_keras.csv")
-
-# Save model
-# saveRDS(object = xgb_fit, "model/xgb.rds")
-
-############################ Cross Validation #############################
-
-## v-fold cross validation
-# folds <- vfold_cv(train_data, v = 5)
-
-folded <- folds %>% 
-  mutate(
-    recipes = splits %>%
-      # Prepper is a wrapper for `prep()` which handles `split` objects
-      map(prepper, recipe = rec), 
-    training_data = splits %>% map(analysis),
-    xgb_fits = map2(
-      recipes,
-      training_data, 
-      ~ fit(
-        xgb_mod, 
-        formula(.x), 
-        data = bake(object = .x, new_data = .y)
-      )
-    )
-  )
-
-## Predict 
-predict_rf <- function(split, rec, model) {
-  test_set <- bake(rec, assessment(split))
-  tibble(actual = test_set$survived) %>% 
-    bind_cols(pred_class = predict(model, test_set, type = "class")$.pred_class) %>% 
-    bind_cols(pred_prob = predict(model, test_set, type = "prob"))
-}
-
-predictions <- folded %>% 
-  mutate(pred = list(
-    splits,
-    recipes,
-    xgb_fits
-  ) %>% 
-    pmap(predict_rf)
-  )
-
-## Evaluate
-eval <- predictions %>% 
-  transmute(
-    metrics = pred %>% map(~ metrics(., truth = actual, starts_with(".pred")[1], estimate = pred_class))
-  ) %>% 
-  unnest(metrics)
-
-eval %>% knitr::kable()
-
-eval %>% 
-  group_by(.metric) %>% 
-  summarise_at(.vars = vars(.estimate), .funs = list(min = min, median = median, mean = mean, sd = sd, max = max)) %>% 
-  knitr::kable()
+ens_all <- ens_data_prep(bind_rows(train, test), logreg_fit, rf_fit, xgb_fit)
+metric_accuracy(actual = ens_all$survived, predicted = ens_all$survived) 
+  
