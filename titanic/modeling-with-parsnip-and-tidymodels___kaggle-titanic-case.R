@@ -69,7 +69,7 @@ preproc <- function(dataset, outcome = NULL, level = NULL){
            family_size_category = case_when(family_size == 1 ~ "singleton",
                                           between(family_size, 1, 5) ~ "small",
                                           family_size > 5 ~ "large"),
-           family_size_category = factor(family_size_category),
+           # family_size_category = factor(family_size_category),
            deck = str_sub(cabin, 1, 1),
            deck = case_when(is.na(deck) ~ "Regular",
                             TRUE ~ as.character(deck)),
@@ -581,7 +581,7 @@ eval %>%
 
 ###########################################################################
 #                                                                         #
-#                            Ensemble Modeling                             #
+#                            Ensemble Modeling                            #
 #                                                                         #
 ###########################################################################
 
