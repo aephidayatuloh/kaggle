@@ -234,7 +234,7 @@ test_data_baked <- prepped %>%
 
 submission_titanic %>% 
   mutate(Survived = predict(logreg_fit, test_data_baked, type = "class")$.pred_class) %>% 
-  write_csv("06-modeling/submission_titanic_logreg_eng_glm.csv")
+  write_csv("titanic/submission_titanic_logreg_eng_glm.csv")
 
 # Save model
 # saveRDS(object = logreg_fit, "model/logreg_fit.rds")
@@ -379,7 +379,7 @@ test_data_baked <- prepped %>%
 
 submission_titanic %>% 
   mutate(Survived = predict(rf_fit, test_data_baked, type = "class")$.pred_class) %>% 
-  write_csv("06-modeling/submission_titanic.csv")
+  write_csv("titanic/submission_titanic_rf.csv")
 
 # Save model
 # saveRDS(object = rf_fit, "model/rf.rds")
@@ -523,7 +523,7 @@ test_data_baked <- prepped %>%
 
 submission_titanic %>% 
   mutate(Survived = predict(xgb_fit, test_data_baked, type = "class")$.pred_class) %>% 
-  write_csv("06-modeling/submission_titanic_xgb_eng_xgb.csv")
+  write_csv("titanic/submission_titanic_xgb_eng_xgb.csv")
 
 # Save model
 # saveRDS(object = xgb_fit, "model/xgb.rds")
