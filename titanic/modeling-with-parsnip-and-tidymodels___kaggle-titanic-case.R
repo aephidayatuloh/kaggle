@@ -157,7 +157,7 @@ logreg_mod <- logistic_reg(
 ## Fitting
 logreg_fit <- fit(
   object = logreg_mod,
-  formula = formula(prepped),
+  formula = formula(prepped), 
   data = train
 )
 
@@ -379,7 +379,7 @@ test_data_baked <- prepped %>%
 
 submission_titanic %>% 
   mutate(Survived = predict(rf_fit, test_data_baked, type = "class")$.pred_class) %>% 
-  write_csv("titanic/submission_titanic_rf.csv")
+  write_csv("titanic/submission_titanic_rf_eng_rf.csv")
 
 # Save model
 # saveRDS(object = rf_fit, "model/rf.rds")
